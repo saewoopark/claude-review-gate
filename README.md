@@ -46,7 +46,23 @@ npm test             # 13 checks: diff, code_context, prompt, gate HTTP loop
 node scripts/mcp_e2e.mjs   # full MCP → gate → feedback bridge (no editor needed)
 ```
 
-## Run the extension
+## Package & install (`.vsix`)
+
+```bash
+npm run package          # → claude-review-gate-0.1.0.vsix  (~12 KB)
+```
+
+Install it in VS Code: **Extensions** view → the **⋯** menu → **Install from
+VSIX…** → pick `claude-review-gate-0.1.0.vsix`. (No `code` CLI on this machine, so
+`code --install-extension …` isn't available here; use the UI.)
+
+> The `.vsix` ships **only the in-editor gate** (`dist/extension.js` + `dist/gate/`)
+> — it has no bundled `node_modules`. The **MCP bridge runs from this repo**
+> (`node <repo>/dist/mcp/server.js`, which needs the repo's `node_modules`), so keep
+> the repo around and register it as below. Installing the vsix alone gives you the
+> review UI but not the Claude integration.
+
+## Run the extension (from source, for development)
 
 > ⚠️ Requires VS Code + the Extension Development Host. There's no `code` CLI on
 > this machine, so the in-editor UI is **not yet exercised here** — these are the

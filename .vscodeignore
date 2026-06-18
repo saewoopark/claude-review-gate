@@ -1,0 +1,11 @@
+src/**
+scripts/**
+node_modules/**
+dist/**/*.map
+dist/test/**
+dist/mcp/**
+tsconfig.json
+.mcp.json.example
+.gitignore
+**/*.ts
+.vscode-test/**

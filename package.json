@@ -33,9 +33,11 @@
     }
   },
   "scripts": {
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "node ./dist/test/run.js"
+    "test": "node ./dist/test/run.js",
+    "package": "vsce package --allow-missing-repository"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -44,6 +46,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.0.0",
     "typescript": "^5.4.0"
   }
 }
