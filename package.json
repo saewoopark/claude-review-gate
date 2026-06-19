@@ -2,7 +2,7 @@
   "name": "claude-review-gate",
   "displayName": "Claude Review Gate",
   "description": "Human-in-the-loop review gate for AI code changes — native inline comments, fed back to Claude Code via MCP.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "local-dev",
   "license": "MIT",
   "engines": { "vscode": "^1.90.0", "node": ">=18" },
@@ -12,14 +12,18 @@
   "activationEvents": ["onStartupFinished"],
   "contributes": {
     "commands": [
+      { "command": "claudeReviewGate.submitReview", "title": "Review Gate: Submit review…", "icon": "$(check-all)" },
       { "command": "claudeReviewGate.approve", "title": "Review Gate: Approve", "icon": "$(check)" },
-      { "command": "claudeReviewGate.requestChanges", "title": "Review Gate: Request changes", "icon": "$(request-changes)" },
+      { "command": "claudeReviewGate.requestChanges", "title": "Review Gate: Request changes", "icon": "$(comment-discussion)" },
       { "command": "claudeReviewGate.addComment", "title": "Add review comment" },
       { "command": "claudeReviewGate.status", "title": "Review Gate: Show status" }
     ],
     "menus": {
       "comments/commentThread/context": [
         { "command": "claudeReviewGate.addComment", "group": "inline" }
+      ],
+      "editor/title": [
+        { "command": "claudeReviewGate.submitReview", "when": "resourceScheme == reviewgate", "group": "navigation@1" }
       ]
     },
     "configuration": {

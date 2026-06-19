@@ -64,6 +64,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(approveItem, requestItem);
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("claudeReviewGate.submitReview", () => submitReview()),
     vscode.commands.registerCommand("claudeReviewGate.approve", () => finalize("approve")),
     vscode.commands.registerCommand("claudeReviewGate.requestChanges", () => finalize("request_changes")),
     vscode.commands.registerCommand("claudeReviewGate.addComment", (reply: vscode.CommentReply) =>
@@ -122,6 +123,37 @@ function onReview(id: string, req: ReviewRequest, round: number): void {
       if (choice === "Approve") finalize("approve");
       else if (choice === "Request changes") finalize("request_changes");
     });
+}
+
+type VerdictPick = vscode.QuickPickItem & { verdict: "approve" | "request_changes" };
+
+async function submitReview(): Promise<void> {
+  if (!active) {
+    vscode.window.showInformationMessage("Review Gate: no review is currently open.");
+    return;
+  }
+  const commentCount = active.threads.reduce(
+    (n, t) => n + t.comments.filter((c) => c.author?.name === "You").length,
+    0,
+  );
+  const items: VerdictPick[] = [
+    {
+      label: "$(check) Approve",
+      description: "finish — let the agent proceed",
+      verdict: "approve",
+    },
+    {
+      label: "$(comment-discussion) Request changes",
+      description: `send ${commentCount} comment(s) back to the agent`,
+      verdict: "request_changes",
+    },
+  ];
+  const pick = await vscode.window.showQuickPick(items, {
+    title: `Submit review · round ${active.round}`,
+    placeHolder: "Choose a verdict to send back to the agent",
+  });
+  if (!pick) return;
+  await finalize(pick.verdict);
 }
 
 function addComment(reply: vscode.CommentReply): void {
