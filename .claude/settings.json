@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/recordTouched.mjs\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/reviewGateStopHook.mjs\"",
+            "timeout": 1800,
+            "statusMessage": "Review gate: waiting for human review…"
+          }
+        ]
+      }
+    ]
+  }
+}

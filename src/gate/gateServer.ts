@@ -1,4 +1,4 @@
-// Local HTTP gate server (no vscode). The MCP bridge POSTs a review and
+// Local HTTP gate server (no vscode). The Stop hook POSTs a review and
 // long-polls for the verdict; the extension calls submitVerdict() in-process
 // when the human decides.
 
@@ -8,8 +8,6 @@ import { Feedback, ReviewRequest, Side, Verdict } from "./types.js";
 
 interface Pending {
   request: ReviewRequest;
-  round: number;
-  parentId?: string;
   feedback: Feedback | null;
   waiters: Array<(fb: Feedback | null) => void>;
 }
@@ -21,7 +19,7 @@ export interface RawComment {
   body: string;
 }
 
-export type OnReview = (id: string, req: ReviewRequest, round: number) => void;
+export type OnReview = (id: string, req: ReviewRequest) => void;
 
 const WAIT_MS = 25_000;
 
@@ -29,7 +27,13 @@ export class GateServer {
   private reviews = new Map<string, Pending>();
   private server: http.Server | null = null;
   private counter = 0;
-  constructor(private onReview: OnReview) {}
+  constructor(private onReview: OnReview, private token?: string) {}
+
+  /** Authorized iff no token is configured, or the request carries the right one. */
+  private authed(req: http.IncomingMessage): boolean {
+    if (!this.token) return true;
+    return req.headers["x-review-gate-token"] === this.token;
+  }
 
   start(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -59,7 +63,6 @@ export class GateServer {
     if (!p || p.feedback) return false;
     p.feedback = {
       reviewId: id,
-      round: p.round,
       verdict,
       summary,
       comments: comments.map((c) => ({
@@ -75,25 +78,35 @@ export class GateServer {
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     try {
       const url = new URL(req.url || "/", "http://127.0.0.1");
+      // DNS-rebinding guard: only serve requests with a loopback Host header.
+      if (!hostAllowed(req.headers.host)) return json(res, 403, { error: "forbidden host" });
       if (req.method === "GET" && url.pathname === "/health") {
-        return json(res, 200, { ok: true });
+        return json(res, 200, { ok: true }); // liveness only — intentionally unauthenticated
       }
       if (req.method === "POST" && url.pathname === "/reviews") {
+        if (!this.authed(req)) return json(res, 401, { error: "unauthorized" });
         const body = await readBody(req);
-        const reqObj: ReviewRequest & { parentId?: string } = JSON.parse(body || "{}");
+        const reqObj: ReviewRequest = JSON.parse(body || "{}");
         if (!reqObj.diff || !reqObj.diff.trim()) return json(res, 400, { error: "empty diff" });
+        // Dedup: if an identical change is already awaiting review, return that one so
+        // two concurrent hooks (e.g. a project-scoped + a user-global registration)
+        // share a single review instead of opening duplicate tabs.
+        for (const [existingId, p] of this.reviews) {
+          if (!p.feedback && p.request.diff === reqObj.diff && p.request.cwd === reqObj.cwd) {
+            return json(res, 200, { id: existingId });
+          }
+        }
         const id = `rev_${++this.counter}_${Date.now().toString(36)}`;
-        const parent = reqObj.parentId ? this.reviews.get(reqObj.parentId) : undefined;
-        const round = parent ? parent.round + 1 : 1;
         this.reviews.set(id, {
           request: { diff: reqObj.diff, cwd: reqObj.cwd, title: reqObj.title },
-          round, parentId: reqObj.parentId, feedback: null, waiters: [],
+          feedback: null, waiters: [],
         });
-        this.onReview(id, this.reviews.get(id)!.request, round);
-        return json(res, 200, { id, round });
+        this.onReview(id, this.reviews.get(id)!.request);
+        return json(res, 200, { id });
       }
       const m = url.pathname.match(/^\/reviews\/([^/]+)\/feedback$/);
       if (req.method === "GET" && m) {
+        if (!this.authed(req)) return json(res, 401, { error: "unauthorized" });
         const p = this.reviews.get(m[1]);
         if (!p) return json(res, 404, { error: "not found" });
         if (p.feedback) return json(res, 200, p.feedback);
@@ -124,13 +137,31 @@ export class GateServer {
   }
 }
 
+const MAX_BODY = 32 * 1024 * 1024; // 32 MB cap — generous for diffs, guards against local DoS
+
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
-    req.on("data", (c) => (data += c));
+    let len = 0;
+    req.on("data", (c) => {
+      len += c.length;
+      if (len > MAX_BODY) {
+        req.destroy();
+        reject(new Error("request body too large"));
+        return;
+      }
+      data += c;
+    });
     req.on("end", () => resolve(data));
     req.on("error", reject);
   });
+}
+
+/** Accept only loopback Host headers (blocks DNS-rebinding via a malicious domain). */
+function hostAllowed(host?: string): boolean {
+  if (!host) return false;
+  const name = host.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+  return name === "127.0.0.1" || name === "localhost" || name === "::1";
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {

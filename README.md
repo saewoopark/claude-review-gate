@@ -1,117 +1,166 @@
 # Claude Review Gate (VS Code extension)
 
-A human-in-the-loop **review gate** for AI-generated code changes, built as a VS
-Code extension and wired into Claude Code over **MCP**. When the agent finishes a
-change it calls a tool that **blocks**; you review the change with **native inline
-comments** in VS Code (the VS Code Comments API — the same UI as GitHub PR review),
-then Approve or Request changes; your feedback comes back to Claude as a precise
-"revise only this" instruction. Loop until you approve.
-
-This is the VS Code sibling of the `~/llm-reviewer/reviewgate` web-UI gate. Same
-contract (diff → inline comments + verdict → revision prompt), native editor UI.
+A human-in-the-loop **review gate** for AI-generated code changes, built as a VS Code
+extension and wired into Claude Code. When the agent finishes a change, the diff opens
+in VS Code as **native side-by-side panes with inline comments** (the VS Code Comments
+API — the same UI as GitHub PR review). You **Approve** — and any inline comments you
+left come back to Claude as a precise "revise only this" instruction. Loop until you
+approve with no comments.
 
 ```
-Claude edits → calls request_review (MCP) ──blocks──▶ VS Code: inline comments + Approve/Request
-       ▲                                                            │
-       └──────────── revision prompt (tool result) ◀───────────────┘
-   Claude revises → request_review again → … → you Approve → done
+Claude edits ──▶ review gate blocks ──▶ VS Code: inline comments + Approve
+      ▲                                                          │
+      └────── comments (if any) fed back as revision prompt ◀────┘
+   Claude resolves comments → gate again → … → you Approve clean → done
 ```
 
-## Why MCP (not a hook)
+The gate is enforced by a **`Stop` hook**: the harness runs it at the end of every
+turn, so review can't be skipped or forgotten. The hook talks to the local gate the
+extension hosts (`127.0.0.1:7879`).
 
-A review gate must **block for human input** and feed structured text back. An MCP
-tool does this natively: the call blocks, the timeout is configurable, and the
-tool's return value becomes the `tool_result` Claude reasons over — so the revise
-loop is automatic. (A `Stop`-hook alternative is sketched below, but its stdin/
-stdout JSON is version-sensitive; MCP is the recommended path.)
+## Reviewing in VS Code
+
+When a review opens, each changed file appears as a two-pane diff (base ↔ changed).
+There's just one decision — **Approve** — and the verdict is decided by what you left:
+
+- **Comment** on either pane — hover a line, click the `+`, type, and submit with the
+  **Add review comment** button on the box. Comments anchor to exact file lines.
+- **Approve** *(per file)* — marks the focused file done and **closes its diff tab**.
+  In the **editor title bar**, or press **⌘↵ / Ctrl+↵** while focused on a diff pane.
+  The status bar shows how many files are left.
+- **Approve all** — finishes every file at once and **closes all the diff tabs**. In
+  the editor title bar and the status bar.
+
+When the review finishes (last file approved, or Approve all), the verdict is automatic:
+
+- **No comments anywhere → `approve`.**
+- **Any inline comments → `request changes`**, carrying those comments so the agent
+  resolves them — then it re-submits and you review again. Loop until you approve with
+  no comments.
+
+No summary prompt, no separate "Request changes" button. There's no popup notification
+either: the buttons and the opened diff tabs are the affordances (a brief,
+self-dismissing status-bar line announces each new review).
 
 ## Layout
 
 | Path | Role |
 |---|---|
-| `src/extension.ts` | VS Code extension: starts the gate server, renders the review with the Comments API, Approve/Request status-bar actions |
+| `src/extension.ts` | VS Code extension: hosts the gate, renders side-by-side diffs + inline comments, per-file Approve / Approve all (comment-driven verdict) |
 | `src/gate/gateServer.ts` | Local HTTP gate (create review, long-poll verdict) — no vscode deps |
-| `src/gate/diff.ts` | unified-diff parsing + `code_context` extraction |
+| `src/gate/diff.ts` / `sideBySide.ts` | unified-diff parsing, `code_context` extraction, two-pane rendering |
 | `src/gate/feedbackPrompt.ts` | render verdict + comments → "revise only this" prompt |
-| `src/mcp/server.ts` | MCP stdio server: `request_review` tool → gate → block → revision prompt |
+| `scripts/reviewGateStopHook.mjs` | **Stop hook**: gates every turn end over HTTP; self-contained (Node builtins only) |
+| `scripts/recordTouched.mjs` | **PostToolUse tracker**: records edited paths so reviews are scoped to touched files |
+| `.claude/settings.json` | registers both hooks for this repo (the extension can self-register them globally) |
 | `src/test/run.ts` | Node tests for the non-UI core |
-| `.mcp.json.example` | project-scoped MCP registration |
 
 ## Build & test
 
 ```bash
 npm install
 npm run compile      # tsc → dist/
-npm test             # 13 checks: diff, code_context, prompt, gate HTTP loop
-node scripts/mcp_e2e.mjs   # full MCP → gate → feedback bridge (no editor needed)
+npm test             # 28 checks: diff, code_context, prompt, gate HTTP loop, auth/host guards
 ```
 
 ## Package & install (`.vsix`)
 
 ```bash
-npm run package          # → claude-review-gate-0.1.0.vsix  (~12 KB)
+npm run package          # → claude-review-gate-0.11.0.vsix
 ```
 
-Install it in VS Code: **Extensions** view → the **⋯** menu → **Install from
-VSIX…** → pick `claude-review-gate-0.1.0.vsix`. (No `code` CLI on this machine, so
-`code --install-extension …` isn't available here; use the UI.)
+Install it in VS Code: **Extensions** view → the **⋯** menu → **Install from VSIX…** →
+pick `claude-review-gate-0.11.0.vsix`, then reload the window. (If you have the `code`
+CLI: `code --install-extension claude-review-gate-0.11.0.vsix`.)
 
-> The `.vsix` ships **only the in-editor gate** (`dist/extension.js` + `dist/gate/`)
-> — it has no bundled `node_modules`. The **MCP bridge runs from this repo**
-> (`node <repo>/dist/mcp/server.js`, which needs the repo's `node_modules`), so keep
-> the repo around and register it as below. Installing the vsix alone gives you the
-> review UI but not the Claude integration.
-
-## Run the extension (from source, for development)
-
-> ⚠️ Requires VS Code + the Extension Development Host. There's no `code` CLI on
-> this machine, so the in-editor UI is **not yet exercised here** — these are the
-> steps to run it; the non-UI core and the MCP bridge are verified (above).
-
-1. Open this folder in VS Code.
-2. Press **F5** ("Run Extension") → an Extension Development Host window launches
-   with the gate active (listening on `127.0.0.1:7879`).
-3. Open your *target project* in that host window (or a second folder).
+> The `.vsix` bundles everything it needs — the in-editor gate **and** the hook
+> scripts (`scripts/*.mjs`). No `node_modules`, no separate repo on disk.
 
 ## Wire it into Claude Code
 
-Register the MCP bridge (project scope writes `.mcp.json`; user scope is global):
+**Install the extension and click Enable — that's it.** On first activation it asks
+*"Enable Claude Review Gate for Claude Code?"*; choosing **Enable** writes the `Stop` +
+`PostToolUse` hooks into your user-global `~/.claude/settings.json`, pointing at the
+scripts **bundled inside the extension** — no repo on disk, no manual editing. It keeps
+that path current across extension updates, and the **Review Gate: Disable for Claude
+Code** command removes it cleanly.
 
-```bash
-claude mcp add --transport stdio --scope project \
-  --env REVIEW_GATE_PORT=7879 \
-  review-gate -- node /Users/jaewoo.park/claude-review-gate/dist/mcp/server.js
+> After enabling, run `/hooks` once in an already-open Claude Code session (or restart)
+> to activate it — new sessions pick it up automatically. Requires `node` on PATH (the
+> hooks shell out to `node …`) and a Claude Code version with `Stop`/`PostToolUse` hooks.
+
+### Manual setup (optional)
+
+To wire it yourself instead — e.g. **project-scoped** in a repo's `.claude/settings.json`
+(this repo ships exactly this) — add equivalent hooks pointing at the scripts by path:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Edit|Write|NotebookEdit", "hooks": [ {
+        "type": "command",
+        "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/recordTouched.mjs\""
+      } ] }
+    ],
+    "Stop": [
+      { "hooks": [ {
+        "type": "command",
+        "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/reviewGateStopHook.mjs\"",
+        "timeout": 1800
+      } ] }
+    ]
+  }
+}
 ```
 
-…or copy `.mcp.json.example` to your project's `.mcp.json`.
+By default the hook reviews **only the files Claude touched** — the `PostToolUse` hook
+records each `Edit`/`Write`/`NotebookEdit` path in `.git/review-gate-touched`, and the
+Stop hook diffs just those (`git diff -- <paths>`), clearing the list on approval so
+each review is scoped to what changed since the last one. If that tracker file is
+absent, it falls back to the whole working-tree diff (incl. untracked files, honoring
+`.gitignore`) so nothing slips through. Either way it POSTs to the gate and blocks
+until you decide; approved diffs are remembered (hashed under `.git/`) so they aren't
+re-reviewed.
 
-Then tell Claude to use it (put in the project's `CLAUDE.md`):
+> Tracking is by tool call, so files changed via Bash (e.g. `sed -i`) aren't scoped in
+> — only `Edit`/`Write`/`NotebookEdit` edits are.
 
-```md
-After making code edits and before finishing, call the `request_review` MCP tool
-(server: review-gate) with `cwd` set to the repo root. If it requests changes,
-address ONLY the listed comments, then call `request_review` again passing
-`parent_review_id` with the id it returned. Only finish once it returns APPROVED.
-```
+Knobs (env, e.g. in `.claude/settings.json` `"env"`):
 
-Now: Claude edits → `request_review` blocks → you review in VS Code → Approve/Request
-→ Claude revises or finishes. The headless `claude -p` honors the same MCP config,
-so this works in scripted runs too (the tool just blocks until you decide).
+- `REVIEW_GATE_PORT` — gate port (default `7879`; match the extension's setting).
+- `REVIEW_GATE_REQUIRED=1` — fail **closed**: block the turn if the gate is
+  unreachable. Default fails **open** with a warning, so a missing extension never
+  bricks a session.
 
-### Optional: Stop-hook alternative (sketch — verify field names)
+> After adding the hooks, open `/hooks` once (reloads config) or restart Claude Code —
+> the settings watcher only picks up `.claude/` if a settings file was present at
+> startup.
 
-Instead of (or in addition to) the tool, a `Stop` hook can auto-gate turn
-completion. The hook reads the working-tree diff, POSTs to the gate
-(`/reviews`), long-polls `/reviews/<id>/feedback?wait=true`, and returns the
-revision prompt to Claude. The exact hook stdout schema (`hookSpecificOutput`,
-`additionalContext`, exit-code 2) is version-sensitive — confirm against
-`https://code.claude.com/docs/en/hooks.md` for your Claude Code version before
-relying on it.
+## Security
+
+The gate is a local dev tool, hardened for the local-process threat model:
+
+- **Loopback only** — binds `127.0.0.1`; never exposed to the network.
+- **Human-in-the-loop can't be bypassed** — verdicts are submitted in-process from the
+  editor (a click), never over HTTP. Nothing external can inject an "approve".
+- **Token-authenticated** — the extension writes a per-install secret to
+  `~/.claude/review-gate.token` (mode `0600`); `POST /reviews` and the feedback read
+  require it (`X-Review-Gate-Token`), so a blind localhost port-probe is rejected.
+  `/health` stays open (liveness only).
+- **DNS-rebinding guard** — non-loopback `Host` headers are refused (`403`).
+- **Body-size cap** (32 MB) guards against local memory-DoS.
+- **No shell injection / no untrusted code execution** — hooks call `git` via
+  `execFileSync` (array args, no shell); review comments render as untrusted markdown.
+
+Note: enabling writes hooks to your global `~/.claude/settings.json` that run `node …`
+each turn — i.e. you're trusting this (user-installed) extension to run code via Claude
+Code. The **Disable** command removes that wiring.
 
 ## Status
 
-- [x] Core (diff, code_context, feedback prompt, gate HTTP long-poll) — compiled + tested
-- [x] MCP `request_review` bridge — boots, lists tool, full e2e verified
-- [x] Extension authored against the Comments API (compiles)
-- [ ] **In-editor UI not yet run** (needs VS Code on this machine)
-- [ ] Package as `.vsix` (`vsce package`) for install without F5
+- [x] Core (diff, code_context, feedback prompt, gate HTTP long-poll) — compiled + tested (28 checks)
+- [x] Extension UI — side-by-side diffs, inline comments, per-file Approve / Approve all, ⌘↵ shortcut, comment-driven verdict, auto tab-close
+- [x] Stop hook — harness-enforced gate, touched-file scoping, fail-open/closed, dedup of approved diffs
+- [x] One-click **Enable for Claude Code** — the extension bundles the hook scripts and self-registers them in `~/.claude/settings.json` (no repo on disk, no manual wiring)
+- [x] Packaged as `.vsix`

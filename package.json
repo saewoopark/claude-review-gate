@@ -1,8 +1,18 @@
 {
   "name": "claude-review-gate",
   "displayName": "Claude Review Gate",
-  "description": "Human-in-the-loop review gate for AI code changes — native inline comments, fed back to Claude Code via MCP.",
-  "version": "0.4.0",
+  "description": "Human-in-the-loop review gate for AI code changes: review native side-by-side diffs with inline comments in VS Code and feed Approve / Request-changes back to Claude Code, enforced automatically by a Stop hook.",
+  "version": "0.11.0",
+  "keywords": [
+    "claude",
+    "claude code",
+    "code review",
+    "review gate",
+    "human-in-the-loop",
+    "hooks",
+    "diff",
+    "ai"
+  ],
   "publisher": "local-dev",
   "license": "MIT",
   "engines": {
@@ -13,28 +23,20 @@
     "Other"
   ],
   "main": "./dist/extension.js",
-  "bin": {
-    "claude-review-gate-mcp": "./dist/mcp/server.js"
-  },
   "activationEvents": [
     "onStartupFinished"
   ],
   "contributes": {
     "commands": [
       {
-        "command": "claudeReviewGate.submitReview",
-        "title": "Review Gate: Submit review…",
-        "icon": "$(check-all)"
-      },
-      {
         "command": "claudeReviewGate.approve",
-        "title": "Review Gate: Approve",
+        "title": "Review Gate: Approve file",
         "icon": "$(check)"
       },
       {
-        "command": "claudeReviewGate.requestChanges",
-        "title": "Review Gate: Request changes",
-        "icon": "$(comment-discussion)"
+        "command": "claudeReviewGate.approveAll",
+        "title": "Review Gate: Approve all files",
+        "icon": "$(check-all)"
       },
       {
         "command": "claudeReviewGate.addComment",
@@ -43,6 +45,14 @@
       {
         "command": "claudeReviewGate.status",
         "title": "Review Gate: Show status"
+      },
+      {
+        "command": "claudeReviewGate.enableInClaudeCode",
+        "title": "Review Gate: Enable for Claude Code"
+      },
+      {
+        "command": "claudeReviewGate.disableInClaudeCode",
+        "title": "Review Gate: Disable for Claude Code"
       }
     ],
     "menus": {
@@ -54,19 +64,32 @@
       ],
       "editor/title": [
         {
-          "command": "claudeReviewGate.submitReview",
+          "command": "claudeReviewGate.approve",
           "when": "resourceScheme == reviewgate",
           "group": "navigation@1"
+        },
+        {
+          "command": "claudeReviewGate.approveAll",
+          "when": "resourceScheme == reviewgate",
+          "group": "navigation@2"
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "claudeReviewGate.approve",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "claudeReviewGate.reviewActive && resourceScheme == reviewgate && !commentEditorFocused"
+      }
+    ],
     "configuration": {
       "title": "Claude Review Gate",
       "properties": {
         "claudeReviewGate.port": {
           "type": "number",
           "default": 7879,
-          "description": "Local port the review gate listens on (the MCP bridge talks to this)."
+          "description": "Local port the review gate listens on (the Stop hook talks to this)."
         }
       }
     }
@@ -77,10 +100,6 @@
     "watch": "tsc -watch -p ./",
     "test": "node ./dist/test/run.js",
     "package": "vsce package --allow-missing-repository"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

@@ -3,6 +3,7 @@
 // Run with: npm test  (after npm run compile)
 
 import assert from "node:assert";
+import * as http from "node:http";
 import { changedFiles, codeContext } from "../gate/diff.js";
 import { buildDiffLineMap } from "../gate/diffDoc.js";
 import { buildSideBySide, parseHunks } from "../gate/sideBySide.js";
@@ -60,17 +61,17 @@ async function main(): Promise<void> {
 
   // --- feedback prompt ---
   const fb: Feedback = {
-    reviewId: "r1", round: 2, verdict: "request_changes", summary: "fix off-by-one",
+    reviewId: "r1", verdict: "request_changes", summary: "fix off-by-one",
     comments: [{ file: "cart.py", line: 3, side: "new", body: "index out of range", code_context: cc }],
   };
   const prompt = renderRevisionPrompt(fb);
-  ok("prompt is scoped", prompt.includes("ONLY") && prompt.includes("round 2"));
+  ok("prompt is scoped", prompt.includes("ONLY") && prompt.includes("fix off-by-one"));
   ok("prompt anchors comment", prompt.includes("cart.py:3 (new side)") && prompt.includes("index out of range"));
   ok("approve prompt", renderRevisionPrompt({ ...fb, verdict: "approve", comments: [] }).includes("APPROVED"));
 
   // --- gate server: full HTTP loop ---
-  let received: { id: string; round: number } | undefined;
-  const server = new GateServer((id, _req, round) => { received = { id, round }; });
+  let received: { id: string } | undefined;
+  const server = new GateServer((id) => { received = { id }; });
   const port = 7900 + Math.floor(Date.now() % 50);
   await server.start(port);
   const base = `http://127.0.0.1:${port}`;
@@ -81,7 +82,7 @@ async function main(): Promise<void> {
   const created = (await (await fetch(`${base}/reviews`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ diff: DIFF, cwd: "/repo", title: "t" }),
-  })).json()) as { id: string; round: number };
+  })).json()) as { id: string };
   ok("review created with id", typeof created.id === "string");
   ok("onReview callback fired", received?.id === created.id);
 
@@ -103,6 +104,44 @@ async function main(): Promise<void> {
     got.comments[0].code_context.includes("items[len(items)]"));
 
   server.stop();
+
+  // --- gate server: security (token auth + host allowlist) ---
+  const secServer = new GateServer(() => { /* noop */ }, "secret-token");
+  const secPort = 7950 + Math.floor(Date.now() % 40);
+  await secServer.start(secPort);
+  const secBase = `http://127.0.0.1:${secPort}`;
+
+  const noTok = await fetch(`${secBase}/reviews`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ diff: DIFF, cwd: "/repo" }),
+  });
+  ok("POST without token -> 401", noTok.status === 401);
+
+  const withTok = await fetch(`${secBase}/reviews`, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Review-Gate-Token": "secret-token" },
+    body: JSON.stringify({ diff: DIFF, cwd: "/repo" }),
+  });
+  ok("POST with token -> 200", withTok.status === 200);
+  const secId = ((await withTok.json()) as { id: string }).id;
+
+  const fbNoTok = await fetch(`${secBase}/reviews/${secId}/feedback`);
+  ok("feedback read without token -> 401", fbNoTok.status === 401);
+
+  const healthOpen = await fetch(`${secBase}/health`);
+  ok("health stays open (no token) -> 200", healthOpen.status === 200);
+
+  // non-loopback Host header -> 403 (DNS-rebinding guard)
+  const badHostStatus: number = await new Promise((resolve) => {
+    const r = http.request(
+      { host: "127.0.0.1", port: secPort, path: "/health", method: "GET", headers: { Host: "evil.example.com" } },
+      (res) => { res.resume(); resolve(res.statusCode || 0); },
+    );
+    r.on("error", () => resolve(-1));
+    r.end();
+  });
+  ok("non-loopback Host -> 403", badHostStatus === 403);
+
+  secServer.stop();
   console.log(`\nALL ${passed} CHECKS PASSED`);
 }
 

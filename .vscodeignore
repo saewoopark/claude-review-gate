@@ -1,5 +1,6 @@
 src/**
-scripts/**
+.claude/**
+CLAUDE.md
 *.png
 *.vsix
 node_modules/**

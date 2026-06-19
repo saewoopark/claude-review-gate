@@ -11,7 +11,7 @@ export function renderRevisionPrompt(fb: Feedback): string {
   }
 
   const parts: string[] = [
-    `A human reviewer requested changes (review round ${fb.round}).`,
+    "A human reviewer requested changes.",
     "Revise the change to address ONLY the comments below. Do not make " +
       "unrelated edits, refactors, or cleanups — address each comment and " +
       "nothing more.",

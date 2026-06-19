@@ -1,5 +1,5 @@
-// Shared types for the review gate. No vscode imports — usable from the MCP
-// bridge and unit tests as well as the extension.
+// Shared types for the review gate. No vscode imports — usable from the gate
+// server and unit tests as well as the extension.
 
 export type Side = "old" | "new";
 export type Verdict = "approve" | "request_changes";
@@ -20,7 +20,6 @@ export interface FeedbackComment {
 
 export interface Feedback {
   reviewId: string;
-  round: number;
   verdict: Verdict;
   summary: string;
   comments: FeedbackComment[];
