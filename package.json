@@ -2,35 +2,70 @@
   "name": "claude-review-gate",
   "displayName": "Claude Review Gate",
   "description": "Human-in-the-loop review gate for AI code changes — native inline comments, fed back to Claude Code via MCP.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "local-dev",
   "license": "MIT",
-  "engines": { "vscode": "^1.90.0", "node": ">=18" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Other"
+  ],
   "main": "./dist/extension.js",
-  "bin": { "claude-review-gate-mcp": "./dist/mcp/server.js" },
-  "activationEvents": ["onStartupFinished"],
+  "bin": {
+    "claude-review-gate-mcp": "./dist/mcp/server.js"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "commands": [
-      { "command": "claudeReviewGate.submitReview", "title": "Review Gate: Submit review…", "icon": "$(check-all)" },
-      { "command": "claudeReviewGate.approve", "title": "Review Gate: Approve", "icon": "$(check)" },
-      { "command": "claudeReviewGate.requestChanges", "title": "Review Gate: Request changes", "icon": "$(comment-discussion)" },
-      { "command": "claudeReviewGate.addComment", "title": "Add review comment" },
-      { "command": "claudeReviewGate.status", "title": "Review Gate: Show status" }
+      {
+        "command": "claudeReviewGate.submitReview",
+        "title": "Review Gate: Submit review…",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "claudeReviewGate.approve",
+        "title": "Review Gate: Approve",
+        "icon": "$(check)"
+      },
+      {
+        "command": "claudeReviewGate.requestChanges",
+        "title": "Review Gate: Request changes",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "claudeReviewGate.addComment",
+        "title": "Add review comment"
+      },
+      {
+        "command": "claudeReviewGate.status",
+        "title": "Review Gate: Show status"
+      }
     ],
     "menus": {
       "comments/commentThread/context": [
-        { "command": "claudeReviewGate.addComment", "group": "inline" }
+        {
+          "command": "claudeReviewGate.addComment",
+          "group": "inline"
+        }
       ],
       "editor/title": [
-        { "command": "claudeReviewGate.submitReview", "when": "resourceScheme == reviewgate", "group": "navigation@1" }
+        {
+          "command": "claudeReviewGate.submitReview",
+          "when": "resourceScheme == reviewgate",
+          "group": "navigation@1"
+        }
       ]
     },
     "configuration": {
       "title": "Claude Review Gate",
       "properties": {
         "claudeReviewGate.port": {
-          "type": "number", "default": 7879,
+          "type": "number",
+          "default": 7879,
           "description": "Local port the review gate listens on (the MCP bridge talks to this)."
         }
       }

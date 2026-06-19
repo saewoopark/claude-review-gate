@@ -5,6 +5,7 @@
 import assert from "node:assert";
 import { changedFiles, codeContext } from "../gate/diff.js";
 import { buildDiffLineMap } from "../gate/diffDoc.js";
+import { buildSideBySide, parseHunks } from "../gate/sideBySide.js";
 import { renderRevisionPrompt } from "../gate/feedbackPrompt.js";
 import { GateServer } from "../gate/gateServer.js";
 import { Feedback } from "../gate/types.js";
@@ -45,6 +46,17 @@ async function main(): Promise<void> {
   ok("'+' line maps to new side", map[6]?.side === "new" && map[6]?.file === "cart.py" && map[6]?.line === 3);
   ok("'-' line maps to old side", map[4]?.side === "old");
   ok("context line maps to new side", map[3]?.side === "new" && map[3]?.line === 1);
+
+  // --- side-by-side reconstruction (two-pane native diff) ---
+  const fh = parseHunks(DIFF);
+  ok("parseHunks finds one file + hunk", fh.length === 1 && fh[0].file === "cart.py" && fh[0].hunks.length === 1);
+  const sbs = buildSideBySide(fh[0]);
+  ok("base pane has the removed line", sbs.baseText.includes("items[-1]") && sbs.baseText.includes("def last_item"));
+  ok("mod pane has the added lines", sbs.modText.includes("items[len(items)]") && sbs.modText.includes("# bug"));
+  const modIdx3 = sbs.modMap.indexOf(3);
+  ok("mod-pane line maps to new file line 3", sbs.modText.split("\n")[modIdx3] === "    return items[len(items)]");
+  const baseIdx = sbs.baseMap.indexOf(2);
+  ok("base-pane line maps to old file line 2", sbs.baseText.split("\n")[baseIdx] === "    return items[-1]");
 
   // --- feedback prompt ---
   const fb: Feedback = {

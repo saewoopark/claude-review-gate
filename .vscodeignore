@@ -1,5 +1,7 @@
 src/**
 scripts/**
+*.png
+*.vsix
 node_modules/**
 dist/**/*.map
 dist/test/**
