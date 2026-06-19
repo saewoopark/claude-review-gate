@@ -4,6 +4,7 @@
 
 import assert from "node:assert";
 import { changedFiles, codeContext } from "../gate/diff.js";
+import { buildDiffLineMap } from "../gate/diffDoc.js";
 import { renderRevisionPrompt } from "../gate/feedbackPrompt.js";
 import { GateServer } from "../gate/gateServer.js";
 import { Feedback } from "../gate/types.js";
@@ -35,6 +36,15 @@ async function main(): Promise<void> {
   const cc = codeContext(DIFF, "cart.py", 3, "new");
   ok("code context anchors line 3", cc.includes(">     3:") && cc.includes("items[len(items)]"));
   ok("code context empty for unknown line", codeContext(DIFF, "cart.py", 999, "new") === "");
+
+  // --- diff document line mapping (reviewer comments on the rendered diff) ---
+  const map = buildDiffLineMap(DIFF);
+  ok("line map aligns with diff lines", map.length === DIFF.split("\n").length);
+  // DIFF lines: 0 "--- a", 1 "+++ b", 2 "@@", 3 ctx, 4 "-", 5 "+#bug", 6 "+return..."
+  ok("header/hunk lines are not commentable", map[0] === null && map[1] === null && map[2] === null);
+  ok("'+' line maps to new side", map[6]?.side === "new" && map[6]?.file === "cart.py" && map[6]?.line === 3);
+  ok("'-' line maps to old side", map[4]?.side === "old");
+  ok("context line maps to new side", map[3]?.side === "new" && map[3]?.line === 1);
 
   // --- feedback prompt ---
   const fb: Feedback = {

@@ -1,18 +1,35 @@
-import * as path from "path";
 import * as vscode from "vscode";
-import { changedFiles } from "./gate/diff.js";
+import { buildDiffLineMap, DiffLineLoc } from "./gate/diffDoc.js";
 import { GateServer, RawComment } from "./gate/gateServer.js";
-import { ReviewRequest, Side } from "./gate/types.js";
+import { ReviewRequest } from "./gate/types.js";
+
+const SCHEME = "reviewgate";
 
 interface ActiveReview {
   id: string;
   round: number;
   cwd: string;
+  diffUri: vscode.Uri;
+  lineMap: (DiffLineLoc | null)[];
   threads: vscode.CommentThread[];
+}
+
+class DiffContentProvider implements vscode.TextDocumentContentProvider {
+  private docs = new Map<string, string>();
+  private emitter = new vscode.EventEmitter<vscode.Uri>();
+  onDidChange = this.emitter.event;
+  set(uri: vscode.Uri, text: string): void {
+    this.docs.set(uri.toString(), text);
+    this.emitter.fire(uri);
+  }
+  provideTextDocumentContent(uri: vscode.Uri): string {
+    return this.docs.get(uri.toString()) ?? "";
+  }
 }
 
 let server: GateServer | undefined;
 let controller: vscode.CommentController | undefined;
+let diffProvider: DiffContentProvider;
 let active: ActiveReview | undefined;
 let approveItem: vscode.StatusBarItem;
 let requestItem: vscode.StatusBarItem;
@@ -20,10 +37,22 @@ let requestItem: vscode.StatusBarItem;
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const port = vscode.workspace.getConfiguration("claudeReviewGate").get<number>("port", 7879);
 
+  diffProvider = new DiffContentProvider();
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(SCHEME, diffProvider),
+  );
+
   controller = vscode.comments.createCommentController("claudeReviewGate", "Claude Review Gate");
   controller.commentingRangeProvider = {
     provideCommentingRanges(document: vscode.TextDocument) {
-      return [new vscode.Range(0, 0, Math.max(0, document.lineCount - 1), 0)];
+      if (document.uri.scheme !== SCHEME) return [];
+      // Allow comments only on lines that map to real code (skip headers/hunks).
+      const map = buildDiffLineMap(document.getText());
+      const ranges: vscode.Range[] = [];
+      for (let i = 0; i < map.length; i++) {
+        if (map[i]) ranges.push(new vscode.Range(i, 0, i, 0));
+      }
+      return ranges;
     },
   };
   context.subscriptions.push(controller);
@@ -42,7 +71,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.commands.registerCommand("claudeReviewGate.status", () =>
       vscode.window.showInformationMessage(
-        active ? `Reviewing ${active.threads.length} file(s) — round ${active.round}.`
+        active ? `Reviewing round ${active.round} — comment on the diff, then choose a verdict.`
                : "Review Gate idle.",
       ),
     ),
@@ -65,45 +94,27 @@ export function deactivate(): void {
 }
 
 function onReview(id: string, req: ReviewRequest, round: number): void {
-  // Sequential gate: clear any prior session UI.
   clearActive();
-  const files = changedFiles(req.diff);
-  const threads: vscode.CommentThread[] = [];
+  const safe = (req.title || "review").replace(/[^\w.-]+/g, "_").slice(0, 48) || "review";
+  const uri = vscode.Uri.from({ scheme: SCHEME, path: `/${safe}.diff`, query: id });
+  diffProvider.set(uri, req.diff);
 
-  for (const f of files) {
-    const abs = path.isAbsolute(f.path) ? f.path : path.join(req.cwd, f.path);
-    const uri = vscode.Uri.file(abs);
-    const anchor = f.newLines.length ? Math.max(0, f.newLines[0] - 1) : 0;
-    const thread = controller!.createCommentThread(uri, new vscode.Range(anchor, 0, anchor, 0), [
-      {
-        body: new vscode.MarkdownString(
-          `**Review Gate** · round ${round}. Reply on any line to leave a comment, then **Approve** or **Request changes** in the status bar.`,
-        ),
-        mode: vscode.CommentMode.Preview,
-        author: { name: "Review Gate" },
-      },
-    ]);
-    thread.label = `Review: ${f.path}`;
-    thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
-    threads.push(thread);
-  }
+  active = { id, round, cwd: req.cwd, diffUri: uri, lineMap: buildDiffLineMap(req.diff), threads: [] };
 
-  active = { id, round, cwd: req.cwd, threads };
-  showButtons(files.length, round);
+  // Open the diff as a reviewable document (rendered with VS Code's `diff`
+  // colorization). The reviewer comments on its lines; each maps back to a
+  // real (file, side, line).
+  vscode.workspace.openTextDocument(uri).then(async (doc) => {
+    await vscode.languages.setTextDocumentLanguage(doc, "diff");
+    await vscode.window.showTextDocument(doc, { preview: false });
+  });
 
-  // Reveal the first changed file so the reviewer lands on the change.
-  if (files.length) {
-    const first = files[0];
-    const abs = path.isAbsolute(first.path) ? first.path : path.join(req.cwd, first.path);
-    vscode.workspace.openTextDocument(vscode.Uri.file(abs)).then(
-      (doc) => vscode.window.showTextDocument(doc, { preview: false }),
-      () => {/* file may not exist on disk (e.g. pure rename); ignore */},
-    );
-  }
+  showButtons(round);
 
   vscode.window
     .showInformationMessage(
-      `Review requested: ${req.title || "(untitled change)"} — ${files.length} file(s).`,
+      `Review requested: ${req.title || "(untitled change)"} (round ${round}). ` +
+        `Comment on lines in the diff, then Approve / Request changes.`,
       "Approve",
       "Request changes",
     )
@@ -120,13 +131,13 @@ function addComment(reply: vscode.CommentReply): void {
     author: { name: "You" },
   };
   reply.thread.comments = [...reply.thread.comments, comment];
+  reply.thread.label = "Review comment";
   if (active && !active.threads.includes(reply.thread)) active.threads.push(reply.thread);
 }
 
 async function finalize(verdict: "approve" | "request_changes"): Promise<void> {
-  if (!active || !server) {
-    return;
-  }
+  if (!active || !server) return;
+
   let summary = "";
   if (verdict === "request_changes") {
     summary =
@@ -138,11 +149,12 @@ async function finalize(verdict: "approve" | "request_changes"): Promise<void> {
 
   const comments: RawComment[] = [];
   for (const thread of active.threads) {
-    const line = (thread.range ? thread.range.start.line : 0) + 1; // 1-based new-side line
-    const file = path.relative(active.cwd, thread.uri.fsPath) || thread.uri.fsPath;
+    const ln = thread.range ? thread.range.start.line : 0;
+    const loc = active.lineMap[ln];
+    if (!loc) continue;
     for (const c of thread.comments) {
       if (c.author?.name === "You") {
-        comments.push({ file, line, side: "new" as Side, body: bodyText(c.body) });
+        comments.push({ file: loc.file, line: loc.line, side: loc.side, body: bodyText(c.body) });
       }
     }
   }
@@ -150,7 +162,8 @@ async function finalize(verdict: "approve" | "request_changes"): Promise<void> {
   const ok = server.submitVerdict(active.id, verdict, summary, comments);
   if (ok) {
     vscode.window.setStatusBarMessage(
-      `Review Gate: ${verdict === "approve" ? "approved" : "changes requested"} (${comments.length} comment(s)) — sent to the agent.`,
+      `Review Gate: ${verdict === "approve" ? "approved" : "changes requested"} ` +
+        `(${comments.length} comment(s)) — sent to the agent.`,
       5000,
     );
   }
@@ -161,10 +174,10 @@ function bodyText(body: string | vscode.MarkdownString): string {
   return typeof body === "string" ? body : body.value;
 }
 
-function showButtons(fileCount: number, round: number): void {
+function showButtons(round: number): void {
   approveItem.text = "$(check) Approve review";
-  approveItem.tooltip = `Approve this change (round ${round}, ${fileCount} file(s))`;
-  requestItem.text = "$(request-changes) Request changes";
+  approveItem.tooltip = `Approve this change (round ${round})`;
+  requestItem.text = "$(comment-discussion) Request changes";
   requestItem.tooltip = "Send your inline comments back to the agent";
   approveItem.show();
   requestItem.show();
