@@ -2,13 +2,15 @@ src/**
 .claude/**
 CLAUDE.md
 *.png
+!media/icon.png
+media/icon-source.png
 *.vsix
 node_modules/**
 dist/**/*.map
 dist/test/**
-dist/mcp/**
 tsconfig.json
-.mcp.json.example
 .gitignore
+.vscodeignore
+package-lock.json
 **/*.ts
 .vscode-test/**

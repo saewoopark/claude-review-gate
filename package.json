@@ -15,11 +15,18 @@
   ],
   "publisher": "local-dev",
   "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1b2233",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.90.0",
     "node": ">=18"
   },
   "categories": [
+    "AI",
+    "SCM Providers",
     "Other"
   ],
   "main": "./dist/extension.js",

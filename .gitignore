@@ -2,5 +2,7 @@ node_modules/
 dist/
 *.vsix
 *.png
+!media/icon.png
+!media/icon-source.png
 .DS_Store
 .claude/settings.local.json
