@@ -4,6 +4,7 @@ CLAUDE.md
 *.png
 !media/icon.png
 media/icon-source.png
+*.gif
 *.vsix
 node_modules/**
 dist/**/*.map

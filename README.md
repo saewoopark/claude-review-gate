@@ -7,6 +7,8 @@ API — the same UI as GitHub PR review). You **Approve** — and any inline com
 left come back to Claude as a precise "revise only this" instruction. Loop until you
 approve with no comments.
 
+![Claude Review Gate demo](https://raw.githubusercontent.com/saewoopark/claude-review-gate/main/media/demo.gif)
+
 ```
 Claude edits ──▶ review gate blocks ──▶ VS Code: inline comments + Approve
       ▲                                                          │
